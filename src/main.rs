@@ -10,16 +10,10 @@ use v4l::buffer::Type;
 use v4l::io::traits::CaptureStream;
 use v4l::prelude::MmapStream;
 use v4l::video::Capture;
-use v4l::{v4l_sys, Control, Device, FourCC};
+use v4l::{Device, FourCC};
 
 use env_logger::{Builder, Target, WriteStyle};
 use v4l::context::{enum_devices, Node};
-use v4l::control::Type::Menu;
-use v4l::control::Value;
-use v4l::v4l_sys::{
-    v4l2_control, v4l2_exposure_auto_type, v4l2_exposure_auto_type_V4L2_EXPOSURE_MANUAL, V4L2_CID_EXPOSURE_AUTO,
-    V4L2_CID_EXPOSURE_AUTO_PRIORITY, V4L2_LOCK_EXPOSURE,
-};
 
 const MJPEG_FORMAT_FOURCC: FourCC = FourCC { repr: *b"MJPG" };
 
@@ -73,7 +67,7 @@ async fn handle_connection(stream: TcpStream) {
 
 fn get_usable_devices() -> Vec<Node> {
     let mut device_nodes = enum_devices();
-    device_nodes.sort_by(|node_one, node_two| node_one.index().cmp(&node_two.index()));
+    device_nodes.sort_by_key(|node_one| node_one.index());
     device_nodes.retain(|node| {
         let device = Device::new(node.index()).unwrap();
         let formats = device.enum_formats().unwrap();
@@ -92,7 +86,7 @@ async fn stream_frames(
 ) -> Result<(), Error> {
     let devices = get_usable_devices();
 
-    let dev_path = devices.get(0).unwrap().path();
+    let dev_path = devices.first().unwrap().path();
     info!("Using device: {}\n", dev_path.display());
     let dev = Device::with_path(dev_path).expect("Failed to open device");
     {
@@ -105,34 +99,8 @@ async fn stream_frames(
             .expect("Failed to write format");
 
         let params = dev.params()?;
-        let mut available_controls = dev.query_controls()?;
         info!("Active format:\n{}", actual_format);
         info!("Active parameters:\n{}", params);
-        info!("Available controls: \n");
-        for control in available_controls.iter() {
-            info!("\t{}\n", control);
-        }
-
-        available_controls.retain(|description| {
-            description.id == V4L2_CID_EXPOSURE_AUTO_PRIORITY
-                || description.id == V4L2_CID_EXPOSURE_AUTO
-        });
-
-        let exposure_control = available_controls.get(0).unwrap();
-        let control: Control = if exposure_control.id == V4L2_CID_EXPOSURE_AUTO_PRIORITY {
-            Control {
-                id: V4L2_CID_EXPOSURE_AUTO_PRIORITY,
-                value: Value::Boolean(false),
-            }
-        } else {
-            Control {
-                id: V4L2_CID_EXPOSURE_AUTO,
-                value: Value::Integer(v4l2_exposure_auto_type_V4L2_EXPOSURE_MANUAL.into()),
-            }
-        };
-
-        dev.set_control(control)
-            .expect("Failed to disable 'Exposure, Dynamic Framerate' control");
     }
 
     // Set up a buffer stream and grab a frame, then print its data
